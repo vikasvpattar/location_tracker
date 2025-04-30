@@ -64,7 +64,7 @@ function App() {
       },
       {
         enableHighAccuracy: true, // Request high accuracy for precise location
-        timeout: 5000, // 5 seconds timeout
+        timeout: 10000, // 10 seconds timeout
         maximumAge: 0, // Don't use cached position
       }
     );
